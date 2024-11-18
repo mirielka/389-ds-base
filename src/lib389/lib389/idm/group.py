@@ -112,6 +112,23 @@ class Groups(DSLdapObjects):
         else:
             self._basedn = '{},{}'.format(ensure_str(rdn), ensure_str(basedn))
 
+    def create_test_group(self, gid=2000):
+        """Create a test group with cn=test_group_GID rdn
+
+        :param gid: Group id
+        :type gid: int
+
+        :returns: DSLdapObject of the created entry
+        """
+
+        rdn_value = "test_group_{}".format(gid)
+        rdn = "cn={}".format(rdn_value)
+        properties = {
+            'cn': rdn_value,
+            'description': rdn_value,
+        }
+        return super(Groups, self).create(rdn, properties)
+
 
 class UniqueGroup(DSLdapObject):
     # WARNING!!!
