@@ -45,27 +45,74 @@ def create_test_group(topology_st, request):
 
     request.addfinalizer(fin)
 
+""" Tests to create:
+get rdn
+get dn
+create
+delete
+modify
+rename keep old rdn
+rename
+"""
 
 @pytest.mark.skipif(ds_is_older("1.4.2"), reason="Not implemented")
 def test_dsidm_group_list(topology_st, create_test_group):
     """ Test dsidm group list option
 
-    :id:
+    :id: e10c9430-1ea5-4b81-98c0-524f4f7da0e6
     :setup: Standalone instance
     :steps:
+        1. Run dsidm group list option without json
+        2. Check the output content is correct
+        3. Run dsidm group list option with json
+        4. Check the output content is correct
+        5. Delete the group
+        6. Check the group is not in the list with json
+        7. Check the group is not in the list without json
     :expected results:
+        1. Success
+        2. Success
+        3. Success
+        4. Success
+        5. Success
+        6. Success
+        7. Success
     """
 
     standalone = topology_st.standalone
     args = FakeArgs()
+    args.json = False
     group_value = 'test_group_2000'
+    json_list = ['type',
+                 'list',
+                 'items']
 
     log.info('Empty the log file to prevent false data to check about group')
     topology_st.logcap.flush()
 
-    log.info('Test dsidm group user list')
+    log.info('Test dsidm group list without json')
     list(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
     check_value_in_log_and_reset(topology_st, check_value=group_value)
+
+    log.info('Test dsidm group list with json')
+    args.json = True
+    list(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
+    check_value_in_log_and_reset(topology_st, content_list=json_list, check_value=group_value)
+
+    log.info('Delete the group')
+    groups = Groups(topology_st.standalone, DEFAULT_SUFFIX)
+    testgroup = groups.get(group_value)
+    testgroup.delete()
+
+    log.info('Test empty dsidm group list with json')
+    list(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
+    check_value_in_log_and_reset(topology_st, content_list=json_list, check_value_not=group_value)
+
+    log.info('Test empty dsidm group list without json')
+    args.json = False
+    list(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
+    check_value_in_log_and_reset(topology_st, check_value_not=group_value)
+
 
 if __name__ == '__main__':
     # Run isolated
