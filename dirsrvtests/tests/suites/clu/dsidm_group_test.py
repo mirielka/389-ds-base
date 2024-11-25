@@ -46,8 +46,6 @@ def create_test_group(topology_st, request):
     request.addfinalizer(fin)
 
 """ Tests to create:
-get rdn
-get dn
 rename keep old rdn
 rename
 """
@@ -223,6 +221,113 @@ def test_dsidm_group_list(topology_st, create_test_group):
     list(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
     check_value_in_log_and_reset(topology_st, check_value_not=group_value)
 
+
+@pytest.mark.skipif(ds_is_older("1.4.2"), reason="Not implemented")
+def test_dsidm_group_get_dn(topology_st, create_test_group):
+    """ Test dsidm group get_dn option
+
+        :id: c1d22d33-6431-45c6-9cd1-703225d8db50
+        :setup: Standalone instance
+        :steps:
+             1. Run dsidm group get_dn for created group without json
+             2. Check the output content is correct
+             3. Run dsidm group get_dn for created group with json
+             4. Check the output content is correct
+        :expectedresults:
+             1. Success
+             2. Success
+             3. Success
+             4. Success
+    """
+
+    group_name = 'test_group_2000'
+    standalone = topology_st.standalone
+    groups = Groups(standalone, DEFAULT_SUFFIX)
+    test_group = groups.get(group_name)
+    args = FakeArgs()
+    args.dn = test_group.dn
+    args.json = False
+
+    log.info('Empty the log file to prevent false data to check about group')
+    topology_st.logcap.flush()
+
+    log.info('Test dsidm group get_dn without json')
+    get_dn(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
+    check_value_in_log_and_reset(topology_st, content_list=group_name)
+
+    log.info('Test dsidm group get_dn with json')
+    args.json = True
+    get_dn(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
+    check_value_in_log_and_reset(topology_st, content_list=group_name)
+
+
+@pytest.mark.skipif(ds_is_older("1.4.2"), reason="Not implemented")
+def test_dsidm_group_get_rdn(topology_st, create_test_group):
+    """ Test dsidm group get option
+
+    :id: 8578005b-9dbf-4aa9-bcd4-1431f44bbff7
+    :setup: Standalone instance
+    :steps:
+         1. Run dsidm get option for created group with json
+         2. Check the output content is correct
+         3. Run dsidm get option for created group without json
+         4. Check the json content is correct
+    :expectedresults:
+         1. Success
+         2. Success
+         3. Success
+         4. Success
+    """
+
+    standalone = topology_st.standalone
+    groups = Groups(standalone, DEFAULT_SUFFIX)
+    group_name = 'test_group_2000'
+    test_group = groups.get(group_name)
+
+    group_content = ['dn: {}'.format(test_group.dn),
+                    'cn: {}'.format(test_group.rdn),
+                    'description: {}'.format(test_group.rdn),
+                    'objectClass: top',
+                    'objectClass: groupOfNames',
+                    'objectClass: nsMemberOf']
+
+    json_content = ['attrs',
+                    'objectclass',
+                    'top',
+                    'groupOfNames',
+                    'nsMemberOf',
+                    'cn',
+                    test_group.rdn,
+                    'description',
+                    'creatorsname',
+                    'cn=directory manager',
+                    'modifiersname',
+                    'createtimestamp',
+                    'modifytimestamp',
+                    'nsuniqueid',
+                    'parentid',
+                    'entryid',
+                    'entryuuid',
+                    'dsentrydn',
+                    'entrydn',
+                    test_group.dn
+                    ]
+
+    args = FakeArgs()
+    args.json = False
+    args.selector = group_name
+
+    log.info('Empty the log file to prevent false data to check about group')
+    topology_st.logcap.flush()
+
+    log.info('Test dsidm group get without json')
+    get(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
+    check_value_in_log_and_reset(topology_st, content_list=group_content)
+
+    log.info('Test dsidm group get with json')
+    args.json = True
+    get(standalone, DEFAULT_SUFFIX, topology_st.logcap.log, args)
+    check_value_in_log_and_reset(topology_st, content_list=json_content)
 
 if __name__ == '__main__':
     # Run isolated
