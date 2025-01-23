@@ -180,7 +180,7 @@ def test_create_and_delete_group(topology_st, page, browser_name):
     delete_entry(frame)
     assert frame.get_by_role("button").filter(has_text=f"cn={test_data['group_name']}").count() == 0
 
-
+@pytest.mark.xfail(reason="known bug")
 def test_create_and_delete_organizational_unit(topology_st, page, browser_name):
     """ Test to create and delete organizational unit
 

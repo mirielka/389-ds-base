@@ -194,7 +194,7 @@ def create_entry(frame, entry_type, entry_data):
         frame.get_by_role("button", name="Next", exact=True).click()
 
     elif entry_type == 'custom Entry':
-        frame.get_by_role("checkbox", name="Select row 0").check()
+        frame.get_by_role("checkbox", name="Select row 5").check()
         frame.get_by_role("button", name="Next", exact=True).click()
         frame.get_by_role("checkbox", name="Select row 1").check()
         frame.get_by_role("button", name="Next", exact=True).click()
