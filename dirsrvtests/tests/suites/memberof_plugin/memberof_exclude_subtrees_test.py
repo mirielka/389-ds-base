@@ -32,10 +32,10 @@ PROVISIONING_DN = f'cn={PROVISIONING_CN},{SCOPE_IN_DN}'
 
 ACTIVE_CN = "accounts"
 STAGE_CN = "staged users"
-DELETE_CN = "deleted users"
+#DELETE_CN = "deleted users"
 ACTIVE_DN = f"cn={ACTIVE_CN},{SCOPE_IN_DN}"
 STAGE_DN = f"cn={STAGE_CN},{PROVISIONING_DN}"
-DELETE_DN = f"cn={DELETE_CN},{PROVISIONING_DN}"
+#DELETE_DN = f"cn={DELETE_CN},{PROVISIONING_DN}"
 
 STAGE_USER_CN = "stage guy"
 #STAGE_USER_DN = "cn=%s,%s" % (STAGE_USER_CN, STAGE_DN)
@@ -76,12 +76,12 @@ def containers(topology_st, request):
 
     containers_provisioning = nsContainers(topology_st.standalone, cont_provisioning.dn)
     cont_stage = containers_provisioning.create(properties={'cn': STAGE_CN})
-    cont_delete = containers_provisioning.create(properties={'cn': DELETE_CN})
+    #cont_delete = containers_provisioning.create(properties={'cn': DELETE_CN})
 
     def fin():
         log.info('Delete containers')
         cont_stage.delete()
-        cont_delete.delete()
+        #cont_delete.delete()
         cont_provisioning.delete()
         cont_active.delete()
         cont_scope_out.delete()
@@ -256,12 +256,12 @@ def check_memberof(user, group_dn, should_exist=True):
         assert not found
 
 
-def check_member(user, group, should_exist=True):
-    """Helper function to check member attribute"""
-    if should_exist:
-        assert group.is_member(user.dn)
-    else:
-        assert not group.is_member(user.dn)
+# def check_member(user, group, should_exist=True):
+#     """Helper function to check member attribute"""
+#     if should_exist:
+#         assert group.is_member(user.dn)
+#     else:
+#         assert not group.is_member(user.dn)
 
 
 @pytest.fixture(scope='function')
@@ -532,6 +532,7 @@ def test_memberof_modrdn_stage_user_to_stage(topology_st, containers, stage_user
     # Rename stage user, verify that user is not member of group and memberof attribute is not set
     stage_user.rename(f"uid=x{olduid}")
     assert not active_group.is_member(stage_user.dn)
+    # Original user DN is still a member of the group due to the referential integrity plugin configuration for this test
     assert active_group.is_member(olddn)
     check_memberof(stage_user, active_group.dn, should_exist=False)
 
