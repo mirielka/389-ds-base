@@ -32,23 +32,14 @@ PROVISIONING_DN = f'cn={PROVISIONING_CN},{SCOPE_IN_DN}'
 
 ACTIVE_CN = "accounts"
 STAGE_CN = "staged users"
-#DELETE_CN = "deleted users"
 ACTIVE_DN = f"cn={ACTIVE_CN},{SCOPE_IN_DN}"
 STAGE_DN = f"cn={STAGE_CN},{PROVISIONING_DN}"
-#DELETE_DN = f"cn={DELETE_CN},{PROVISIONING_DN}"
 
 STAGE_USER_CN = "stage guy"
-#STAGE_USER_DN = "cn=%s,%s" % (STAGE_USER_CN, STAGE_DN)
-
 ACTIVE_USER_CN = "active guy"
-#ACTIVE_USER_DN = "cn=%s,%s" % (ACTIVE_USER_CN, ACTIVE_DN)
-
 OUT_USER_CN = "out guy"
-#OUT_USER_DN = "cn=%s,%s" % (OUT_USER_CN, SCOPE_OUT_DN)
 
 STAGE_GROUP_CN = "stage group"
-#STAGE_GROUP_DN = "cn=%s,%s" % (STAGE_GROUP_CN, STAGE_DN)
-
 ACTIVE_GROUP_CN = "active group"
 ACTIVE_GROUP_DN = f"cn={ACTIVE_GROUP_CN},{ACTIVE_DN}"
 
@@ -60,6 +51,25 @@ STAGE_GROUP_DN = f"cn={STAGE_GROUP_CN},{STAGE_DN}"
 
 INDIRECT_ACTIVE_GROUP_CN = "indirect active group"
 INDIRECT_ACTIVE_GROUP_DN = f"cn={INDIRECT_ACTIVE_GROUP_CN},{ACTIVE_DN}"
+
+"""
+Tree structure:
+             ┌─────────────────┐             
+             │dc=example,dc=com│             
+             └────────┬────────┘             
+            ┌─────────┴─────────────────┐    
+         ┌──┴──┐                     ┌──┴───┐
+         │cn=in│                     │cn=out│
+         └──┬──┘                     └──────┘
+    ┌───────┴───────────┐            
+┌───┴───────┐    ┌──────┴────────┐           
+│cn=accounts│    │cn=provisioning│           
+└───────────┘    └───────┬───────┘           
+                         │
+                    ┌────┴───┐                  
+                    │cn=stage│                  
+                    └────────┘                  
+"""
 
 
 @pytest.fixture(scope='function')
@@ -254,14 +264,6 @@ def check_memberof(user, group_dn, should_exist=True):
         assert found
     else:
         assert not found
-
-
-# def check_member(user, group, should_exist=True):
-#     """Helper function to check member attribute"""
-#     if should_exist:
-#         assert group.is_member(user.dn)
-#     else:
-#         assert not group.is_member(user.dn)
 
 
 @pytest.fixture(scope='function')
