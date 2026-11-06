@@ -6,7 +6,6 @@
 # See LICENSE for details.
 # --- END COPYRIGHT BLOCK ---
 #
-import logging
 import os
 import subprocess
 import uuid
@@ -14,19 +13,13 @@ import uuid
 import pytest
 
 from lib389._constants import DEFAULT_SUFFIX, DN_DM
-# from test389.topologies import topology_m1 as topo
 from test389.topologies import topology_st as topo
-from lib389.tasks import (ImportTask, ExportTask, BackupTask, RestoreTask, AutomemberRebuildMembershipTask,
-                          AutomemberAbortRebuildTask, MemberUidFixupTask, MemberOfFixupTask, USNTombstoneCleanupTask,
-                          DBCompactTask, EntryUUIDFixupTask, SchemaReloadTask, SyntaxValidateTask,
-                          FixupLinkedAttributesTask)
+from lib389.tasks import (ImportTask, ExportTask, AutomemberRebuildMembershipTask, MemberOfFixupTask,
+                          USNTombstoneCleanupTask, EntryUUIDFixupTask, SyntaxValidateTask)
 from lib389.plugins import USNPlugin, POSIXWinsyncPlugin, LinkedAttributesPlugin, AutoMembershipPlugin, MemberOfPlugin
 from lib389.dbgen import dbgen_users
 from lib389.idm.user import UserAccount
 from lib389.idm.group import Groups
-from lib389.idm.posixgroup import PosixGroups
-
-log = logging.getLogger(__name__)
 
 DSCONF = '/usr/sbin/dsconf'
 # Enough entries for import/export/reindex to emit multiple nsTaskLog updates when --watch is used.
@@ -54,343 +47,249 @@ def _non_empty_lines(text):
     return [ln for ln in text.splitlines() if ln.strip()]
 
 
-def test_dsconf_task_watch_output(topo):
-    """dsconf backend / backup tasks: ``--watch`` yields more output than default
-
-    Verifies that ``task.watch()``-driven progress (incremental nsTaskLog lines) appears when
-    ``-w`` / ``--watch`` is passed, and that the non-watch paths stay comparatively minimal.
-
-    Reindex is compared with ``--wait`` alone versus ``--wait --watch``; without ``--wait``,
-    ``backend index reindex`` returns immediately and does not wait for the task.
-
-    Backup ``create`` / ``restore`` use ``--timeout 0`` so the default 120s task limit does not
-    fire on a large database.
-
-    :id: 7c4e8a91-2b0d-4f6e-9c1d-8a3e5f7b0d2c
-    :setup: Standalone Instance
-    :steps:
-        1. Online-import a large LDIF without ``--watch``; capture output line count
-        2. Re-import the same LDIF with ``--watch``; capture output — expect more lines
-        3. Export without ``--watch``; then export with ``--watch`` — expect more lines on watch
-        4. ``backend index reindex`` with ``--wait`` only vs ``--wait --watch`` — expect more lines with watch
-        5. ``backup create`` to a dedicated directory without ``--watch``, then to another with ``--watch``
-        6. ``backup restore`` from each archive without / with ``--watch``
-    :expectedresults:
-        1. Import succeeds; non-watch output has few lines
-        2. Import with watch succeeds; strictly more non-empty log lines than without watch
-        3. Both exports succeed; watch run is more verbose
-        4. Both reindex runs succeed; watch run is more verbose
-        5. Both backup creates succeed; watch run is more verbose
-        6. Both restores succeed; watch run is more verbose
-    """
-    inst = topo.standalone
-    be = 'userRoot'
-    tag = uuid.uuid4().hex[:12]
-    import_ldif = os.path.join(inst.ldifdir, 'dsconf_watch_test_import.ldif')
-    export_ldif_a = os.path.join(inst.ldifdir, 'dsconf_watch_test_export_a.ldif')
-    export_ldif_b = os.path.join(inst.ldifdir, 'dsconf_watch_test_export_b.ldif')
-
-    dbgen_users(
-        inst,
-        WATCH_TEST_NUM_USERS,
-        import_ldif,
-        DEFAULT_SUFFIX,
-        parent='ou=people,' + DEFAULT_SUFFIX,
-        generic=True,
-    )
-
-    # import
-    rc, out_imp_nowatch = _run_dsconf(
-        inst,
-        ['backend', 'import', be, import_ldif],
-    )
-    assert rc == 0, out_imp_nowatch
-    lines_imp_nowatch = len(_non_empty_lines(out_imp_nowatch))
-    assert "Processing file" not in out_imp_nowatch, "'Processing file' should not be in the output"
-
-    rc, out_imp_watch = _run_dsconf(
-        inst,
-        ['backend', 'import', be, import_ldif, '--watch'],
-    )
-    assert rc == 0, out_imp_watch
-    lines_imp_watch = len(_non_empty_lines(out_imp_watch))
-    assert lines_imp_watch > lines_imp_nowatch, (
-        f'import --watch should log more lines than without (got {lines_imp_watch} vs {lines_imp_nowatch})'
-    )
-    assert "Processing file" in out_imp_watch, "'Processing file' should be in the output"
-
-    # export
-    rc, out_exp_nowatch = _run_dsconf(
-        inst,
-        ['backend', 'export', be, '-l', export_ldif_a],
-    )
-    assert rc == 0, out_exp_nowatch
-    lines_exp_nowatch = len(_non_empty_lines(out_exp_nowatch))
-    assert "userRoot: Processed" not in out_exp_nowatch, "'userRoot: Processed' should not be in the output"
-
-    rc, out_exp_watch = _run_dsconf(
-        inst,
-        ['backend', 'export', be, '-l', export_ldif_b, '--watch'],
-    )
-    assert rc == 0, out_exp_watch
-    lines_exp_watch = len(_non_empty_lines(out_exp_watch))
-    assert lines_exp_watch > lines_exp_nowatch, (
-        f'export --watch should log more lines than without (got {lines_exp_watch} vs {lines_exp_nowatch})'
-    )
-    assert "userRoot: Processed" in out_exp_watch, "'userRoot: Processed' should be in the output"
-
-    # reindex
-    rc, out_idx_nowatch = _run_dsconf(
-        inst,
-        ['backend', 'index', 'reindex', be, '--wait'],
-    )
-    assert rc == 0, out_idx_nowatch
-    lines_idx_nowatch = len(_non_empty_lines(out_idx_nowatch))
-    assert "Indexing attribute:" not in out_idx_nowatch, "'Indexing attribute:' should not be in the output"
-
-    rc, out_idx_watch = _run_dsconf(
-        inst,
-        ['backend', 'index', 'reindex', be, '--wait', '--watch'],
-    )
-    assert rc == 0, out_idx_watch
-    lines_idx_watch = len(_non_empty_lines(out_idx_watch))
-    assert lines_idx_watch > lines_idx_nowatch, (
-        f'reindex --watch should log more lines than --wait alone (got {lines_idx_watch} vs {lines_idx_nowatch})'
-    )
-    assert "Indexing attribute:" in out_idx_watch, "'Indexing attribute:' should be in the output"
-
-    # backup create
-    bak_create_a = os.path.join(inst.ds_paths.backup_dir, f'dsconf_watch_backup_create_a_{tag}')
-    bak_create_b = os.path.join(inst.ds_paths.backup_dir, f'dsconf_watch_backup_create_b_{tag}')
-
-    rc, out_bak_c_nowatch = _run_dsconf(
-        inst,
-        ['backup', 'create', bak_create_a],
-    )
-    assert rc == 0, out_bak_c_nowatch
-    lines_bak_c_nowatch = len(_non_empty_lines(out_bak_c_nowatch))
-    assert "Creating backup" not in out_bak_c_nowatch, "'Creating backup' should not be in the output"
-
-    rc, out_bak_c_watch = _run_dsconf(
-        inst,
-        ['backup', 'create', bak_create_b, '--watch'],
-    )
-    assert rc == 0, out_bak_c_watch
-    lines_bak_c_watch = len(_non_empty_lines(out_bak_c_watch))
-    assert lines_bak_c_watch > lines_bak_c_nowatch, (
-        f'backup create --watch should log more lines (got {lines_bak_c_watch} vs {lines_bak_c_nowatch})'
-    )
-    assert "Creating backup" in out_bak_c_watch, "'Creating backup' should be in the output"
-
-    # backup restore
-    rc, out_bak_r_nowatch = _run_dsconf(
-        inst,
-        ['backup', 'restore', bak_create_a, '--timeout', '0'],
-    )
-    assert rc == 0, out_bak_r_nowatch
-    lines_bak_r_nowatch = len(_non_empty_lines(out_bak_r_nowatch))
-    assert "Restoring backup" not in out_bak_r_nowatch, "'Restoring backup' should not be in the output"
-
-    rc, out_bak_r_watch = _run_dsconf(
-        inst,
-        ['backup', 'restore', bak_create_b, '--timeout', '0', '--watch'],
-    )
-    assert rc == 0, out_bak_r_watch
-    lines_bak_r_watch = len(_non_empty_lines(out_bak_r_watch))
-    assert lines_bak_r_watch > lines_bak_r_nowatch, (
-        f'backup restore --watch should log more lines (got {lines_bak_r_watch} vs {lines_bak_r_nowatch})'
-    )
-    assert "Restoring backup" in out_bak_r_watch, "'Restoring backup' should be in the output"
+def _assert_watch_output(inst, no_watch_argv, watch_argv, progress_message, task_name):
+    """Verify that a task emits additional progress output with ``--watch``."""
+    rc, no_watch_output = _run_dsconf(inst, no_watch_argv)
+    assert rc == 0, no_watch_output
+    no_watch_lines = len(_non_empty_lines(no_watch_output))
+    assert progress_message not in no_watch_output
+    rc, watch_output = _run_dsconf(inst, watch_argv)
+    assert rc == 0, watch_output
+    assert len(_non_empty_lines(watch_output)) > no_watch_lines, task_name
+    assert progress_message in watch_output
 
 
-def test_task_timeout(topo):
-    """Test that the timeout setting works for all "tasks"
-
-    :id: 6a6f5176-76bf-424d-bc10-d33bdfa529eb
-    :setup: Standalone Instance
-    :steps:
-        1. Test timeout for import task
-        2. Test timeout for export task
-        3. Test timeout for schema validate task
-        4. Test timeout for schema reload task
-        5. Test timeout for automember rebuild
-        6. Test timeout for automember abort
-        7. Test timeout for usn cleanup task
-        8. Test timeout for posix group fixup task
-        9. Test timeout for member UID fixup task
-        10. Test timeout for memberof fixup task
-        11. Test timeout for entryuuid fixup task
-        12. Test timeout for linked attrs fixup task
-        13. test timeout for db compact task
-    :expectedresults:
-        1. Task timed out
-        2. Task timed out
-        3. Task timed out
-        4. Task timed out
-        5. Task timed out
-        6. Task timed out
-        7. Task timed out
-        8. Task timed out
-        9. Task timed out
-        10. Task timed out
-        11. Task timed out
-        12. Task timed out
-        13. Task timed out
-    """
-
-    #inst = topo.ms['supplier1']  --> this leads to a deadlock when testing MemberOfFixupTask
-    inst = topo.standalone
-
-    # Enable plugins
-    plugins = [USNPlugin, POSIXWinsyncPlugin, LinkedAttributesPlugin, AutoMembershipPlugin, MemberOfPlugin]
-    for plugin in plugins:
-        plugin(inst).enable()
-    inst.restart()
-
-    # Test timeout for import task, first create LDIF
-    import_ldif = inst.ldifdir + '/import_task_timeout.ldif'
-    dbgen_users(inst, 100000, import_ldif, DEFAULT_SUFFIX, parent="ou=people," + DEFAULT_SUFFIX, generic=True)
-
-    task = ImportTask(inst)
-    task.import_suffix_from_ldif(ldiffile=import_ldif, suffix=DEFAULT_SUFFIX)
-    task.wait(timeout=.5, sleep_interval=.5)
+def _wait_for_task_timeout(task, timeout=.5):
+    """Verify that a task is still running at the specified timeout."""
+    task.wait(timeout=timeout, sleep_interval=timeout)
     assert task.get_exit_code() is None
     task.wait(timeout=0)
 
-    # Test timeout for export task
-    export_ldif = inst.ldifdir + '/export_task_timeout.ldif'
-    task = ExportTask(inst)
-    task.export_suffix_to_ldif(export_ldif, DEFAULT_SUFFIX)
+
+def _import_ldif(inst, ldif_file):
+    """Import an LDIF and wait for completion."""
+    task = ImportTask(inst)
+    task.import_suffix_from_ldif(ldiffile=ldif_file, suffix=DEFAULT_SUFFIX)
+    task.wait(timeout=0)
+    assert task.get_exit_code() == 0
+
+
+@pytest.fixture(scope='module')
+def watch_test_data(topo):
+    inst = topo.standalone
+    import_ldif = os.path.join(inst.ldifdir, 'dsconf_watch_test_import.ldif')
+    dbgen_users(inst, WATCH_TEST_NUM_USERS, import_ldif, DEFAULT_SUFFIX,
+                parent='ou=people,' + DEFAULT_SUFFIX, generic=True)
+    return inst, import_ldif
+
+
+@pytest.fixture(scope='module')
+def populated_watch_test_data(watch_test_data):
+    inst, import_ldif = watch_test_data
+    if not UserAccount(inst, dn=f'uid=user000001,ou=people,{DEFAULT_SUFFIX}').exists():
+        _import_ldif(inst, import_ldif)
+    return inst
+
+
+def test_dsconf_import_watch_output(watch_test_data):
+    """Import --watch reports progress
+
+    :id: faf879f7-90f0-45bf-aabf-37ed96c52021
+    :setup: Standalone Instance and a large LDIF
+    :steps:
+        1. Import without --watch
+        2. Import with --watch
+    :expectedresults:
+        1. The import succeeds without progress output
+        2. The watched import reports progress
+    """
+    inst, import_ldif = watch_test_data
+    _assert_watch_output(inst, ['backend', 'import', 'userRoot', import_ldif],
+                         ['backend', 'import', 'userRoot', import_ldif, '--watch'], 'Processing file', 'import')
+
+
+def test_dsconf_export_watch_output(populated_watch_test_data):
+    """Export --watch reports progress
+
+    :id: e6b14acc-6952-403c-8fc4-62230bee8afa
+    :setup: Standalone Instance with a populated backend
+    :steps:
+        1. Export without --watch
+        2. Export with --watch
+    :expectedresults:
+        1. The export succeeds without progress output
+        2. The watched export reports progress
+    """
+    inst = populated_watch_test_data
+    _assert_watch_output(inst, ['backend', 'export', 'userRoot', '-l', os.path.join(inst.ldifdir, 'watch_export_a.ldif')],
+                         ['backend', 'export', 'userRoot', '-l', os.path.join(inst.ldifdir, 'watch_export_b.ldif'), '--watch'],
+                         'userRoot: Processed', 'export')
+
+
+def test_dsconf_reindex_watch_output(populated_watch_test_data):
+    """Reindex --watch reports progress
+
+    :id: 64015ec5-3dea-4a12-a65d-a421a7fe28c8
+    :setup: Standalone Instance with a populated backend
+    :steps:
+        1. Reindex with --wait
+        2. Reindex with --wait --watch
+    :expectedresults:
+        1. The reindex succeeds without progress output
+        2. The watched reindex reports progress
+    """
+    _assert_watch_output(populated_watch_test_data, ['backend', 'index', 'reindex', 'userRoot', '--wait'],
+                         ['backend', 'index', 'reindex', 'userRoot', '--wait', '--watch'], 'Indexing attribute:', 'reindex')
+
+
+@pytest.mark.parametrize('operation', ['create', 'restore'])
+def test_dsconf_backup_watch_output(populated_watch_test_data, operation):
+    """Backup operations with --watch report progress
+
+    :id: 9fe71c15-59ff-4878-8275-e2bf70a03237
+    :parametrized: yes
+    :setup: Standalone Instance with a populated backend
+    :steps:
+        1. Run a backup operation without --watch
+        2. Run the backup operation with --watch
+    :expectedresults:
+        1. The operation succeeds without progress output
+        2. The watched operation reports progress
+    """
+    inst = populated_watch_test_data
+    tag = uuid.uuid4().hex[:12]
+    if operation == 'create':
+        no_watch = os.path.join(inst.ds_paths.backup_dir, f'watch_create_a_{tag}')
+        watch = os.path.join(inst.ds_paths.backup_dir, f'watch_create_b_{tag}')
+        _assert_watch_output(inst, ['backup', 'create', no_watch], ['backup', 'create', watch, '--watch'],
+                             'Creating backup', 'backup create')
+    else:
+        no_watch = os.path.join(inst.ds_paths.backup_dir, f'watch_restore_a_{tag}')
+        watch = os.path.join(inst.ds_paths.backup_dir, f'watch_restore_b_{tag}')
+        for backup_dir in (no_watch, watch):
+            rc, output = _run_dsconf(inst, ['backup', 'create', backup_dir])
+            assert rc == 0, output
+        _assert_watch_output(inst, ['backup', 'restore', no_watch, '--timeout', '0'],
+                             ['backup', 'restore', watch, '--timeout', '0', '--watch'],
+                             'Restoring backup', 'backup restore')
+
+
+@pytest.fixture(scope='module')
+def timeout_task_instance(topo):
+    inst = topo.standalone
+    for plugin in [USNPlugin, POSIXWinsyncPlugin, LinkedAttributesPlugin, AutoMembershipPlugin, MemberOfPlugin]:
+        plugin(inst).enable()
+    inst.restart()
+    return inst
+
+
+@pytest.fixture(scope='module')
+def timeout_import_ldif(timeout_task_instance):
+    path = os.path.join(timeout_task_instance.ldifdir, 'import_task_timeout.ldif')
+    dbgen_users(timeout_task_instance, 100000, path, DEFAULT_SUFFIX,
+                parent='ou=people,' + DEFAULT_SUFFIX, generic=True, entry_name='timeout_user')
+    return path
+
+
+@pytest.fixture(scope='module')
+def populated_timeout_database(timeout_task_instance, timeout_import_ldif):
+    if not UserAccount(timeout_task_instance, dn=f'uid=timeout_user100000,ou=people,{DEFAULT_SUFFIX}').exists():
+        _import_ldif(timeout_task_instance, timeout_import_ldif)
+    return timeout_task_instance
+
+
+def test_import_task_timeout(timeout_task_instance, timeout_import_ldif):
+    """Import task honors a short wait timeout
+
+    :id: 7a0b88eb-19cb-41d1-93b2-f5a8682f9a4b
+    :setup: Standalone Instance and a large LDIF
+    :steps:
+        1. Start an import task
+        2. Wait briefly and then for completion
+    :expectedresults:
+        1. The import task starts
+        2. It remains running after the short wait and completes
+    """
+    task = ImportTask(timeout_task_instance)
+    task.import_suffix_from_ldif(ldiffile=timeout_import_ldif, suffix=DEFAULT_SUFFIX)
+    _wait_for_task_timeout(task)
+
+
+def test_export_task_timeout(populated_timeout_database):
+    """Export task handles a short wait timeout
+
+    :id: e6b580bb-167d-4e79-8785-5ff1f8ecd82d
+    :setup: Standalone Instance with a populated backend
+    :steps:
+        1. Start an export task
+        2. Wait briefly and then for completion
+    :expectedresults:
+        1. The export task starts
+        2. It either completes early or completes after the wait
+    """
+    task = ExportTask(populated_timeout_database)
+    task.export_suffix_to_ldif(os.path.join(populated_timeout_database.ldifdir, 'export_task_timeout.ldif'), DEFAULT_SUFFIX)
     task.wait(timeout=.5, sleep_interval=.5)
     if task.get_exit_code() is None:
         task.wait(timeout=0)
     else:
-        log.info('Export task completed before timeout - skipping timeout check')
         assert task.get_exit_code() == 0
 
-    # Test timeout for schema validate task
-    task = SyntaxValidateTask(inst).create(properties={
-        'basedn': DEFAULT_SUFFIX,
-        'filter': "objectClass=*"
-    })
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
 
-    # Test timeout for schema reload task (runs too fast)
-    """
-    task = SchemaReloadTask(inst).create(properties={
-        'schemadir': inst.schemadir,
-    })
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-    """
+@pytest.mark.parametrize('task_class, timeout', [(SyntaxValidateTask, .5), (AutomemberRebuildMembershipTask, .2),
+                                                  (EntryUUIDFixupTask, .5)],
+                         ids=['syntax_validate', 'automember_rebuild', 'entryuuid_fixup'])
+def test_maintenance_task_timeout(populated_timeout_database, task_class, timeout):
+    """Maintenance tasks honor a short wait timeout
 
-    # Test timeout for automember rebuild
-    task = AutomemberRebuildMembershipTask(inst).create(properties={
-        'basedn': DEFAULT_SUFFIX,
-        'filter': "objectClass=*"
-    })
-    task.wait(timeout=.2, sleep_interval=.2)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-
-    # Test timeout for automember abort (runs too fast)
+    :id: e4c6a12e-5dda-47f7-b612-2bce69f7636d
+    :parametrized: yes
+    :setup: Standalone Instance with a populated backend
+    :steps:
+        1. Start a maintenance task
+        2. Wait briefly and then for completion
+    :expectedresults:
+        1. The task starts
+        2. It remains running after the short wait and completes
     """
-    AutomemberRebuildMembershipTask(inst).create(properties={
-        'basedn': DEFAULT_SUFFIX,
-        'filter': "objectClass=*"
-    })
-    task = AutomemberAbortRebuildTask(inst).create()
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-    """
+    task = task_class(populated_timeout_database).create(properties={'basedn': DEFAULT_SUFFIX, 'filter': 'objectClass=*'})
+    _wait_for_task_timeout(task, timeout)
 
-    # Test timeout for usn cleanup task, first delete a bunch of users
+
+def test_usn_tombstone_cleanup_task_timeout(populated_timeout_database):
+    """USN tombstone cleanup honors a short wait timeout
+
+    :id: d9279df8-4b14-4f4e-b91b-fb42cff4be97
+    :setup: Standalone Instance with deleted user entries
+    :steps:
+        1. Delete user entries
+        2. Start tombstone cleanup and wait briefly
+    :expectedresults:
+        1. Tombstones are created
+        2. The task remains running after the short wait and completes
+    """
     for idx in range(1, 2001):
-        entry_idx = str(idx).zfill(6)
-        dn = f"uid=user{entry_idx},ou=people,{DEFAULT_SUFFIX}"
-        UserAccount(inst, dn=dn).delete()
-    task = USNTombstoneCleanupTask(inst).create(properties={
-        'suffix': DEFAULT_SUFFIX,
-    })
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
+        UserAccount(populated_timeout_database, dn=f'uid=timeout_user{str(idx).zfill(6)},ou=people,{DEFAULT_SUFFIX}').delete()
+    _wait_for_task_timeout(USNTombstoneCleanupTask(populated_timeout_database).create(properties={'suffix': DEFAULT_SUFFIX}))
 
-    # Test timeout for Posix Group fixup task (runs too fast)
+
+def test_memberof_fixup_task_timeout(populated_timeout_database):
+    """MemberOf fixup honors a short wait timeout
+
+    :id: 00d257a5-66d1-479d-94c2-d9d00aef278a
+    :setup: Standalone Instance with a large group membership
+    :steps:
+        1. Add many users to a group
+        2. Start MemberOf fixup and wait briefly
+    :expectedresults:
+        1. The group contains the users
+        2. The task remains running after the short wait and completes
     """
-    groups = PosixGroups(inst, DEFAULT_SUFFIX)
-    start_range = 10000
-    for idx in range(1, 10):
-        group_props = {
-            'cn': 'test_posix_group_' + str(idx),
-            'objectclass': ['posixGroup', 'groupofuniquenames'],
-            'gidNumber': str(idx)
-        }
-        group = groups.create(properties=group_props)
-        for user_idx in range(start_range, start_range + 1000):
-            entry_idx = str(user_idx).zfill(6)
-            dn = f"uid=user{entry_idx},ou=people,{DEFAULT_SUFFIX}"
-            group.add('memberuid', dn)
-            group.add('uniquemember', dn)
-        start_range += 1000
-
-    task = MemberUidFixupTask(inst).create(properties={
-        'basedn': DEFAULT_SUFFIX,
-        'filter': "objectClass=*"
-    })
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-    """
-
-    # Test timeout for memberOf fixup task
-    groups = Groups(inst, DEFAULT_SUFFIX)
-    group_props = {'cn': 'test_group'}
-    group = groups.create(properties=group_props)
+    group = Groups(populated_timeout_database, DEFAULT_SUFFIX).create(properties={'cn': 'test_group'})
     for idx in range(5000, 6000):
-        entry_idx = str(idx).zfill(6)
-        dn = f"uid=user{entry_idx},ou=people,{DEFAULT_SUFFIX}"
-        group.add_member(dn)
-
-    task = MemberOfFixupTask(inst).create(properties={
-        'basedn': DEFAULT_SUFFIX,
-        'filter': "objectClass=*"
-    })
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-
-    # Test timeout for entryuuid fixup task
-    task = EntryUUIDFixupTask(inst).create(properties={
-        'basedn': DEFAULT_SUFFIX,
-        'filter': "objectClass=*"
-    })
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-
-    # test timeout for linked attrs fixup (runs too fast)
-    """
-    task = FixupLinkedAttributesTask(inst).create(properties={
-        'basedn': DEFAULT_SUFFIX,
-        'filter': "objectClass=*"
-    })
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-    """
-
-    # Test time out for db compact task (runs too fast)
-    """
-    task = DBCompactTask(inst).create()
-    task.wait(timeout=.5, sleep_interval=.5)
-    assert task.get_exit_code() is None
-    task.wait(timeout=0)
-    """
+        group.add_member(f'uid=timeout_user{str(idx).zfill(6)},ou=people,{DEFAULT_SUFFIX}')
+    task = MemberOfFixupTask(populated_timeout_database).create(properties={'basedn': DEFAULT_SUFFIX, 'filter': 'objectClass=*'})
+    _wait_for_task_timeout(task)
 
 
 if __name__ == '__main__':
